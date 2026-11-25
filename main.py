@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 import datetime
 from urllib.parse import urlparse
 from dateutil import parser
@@ -31,7 +32,7 @@ MODELO_IA = "gemini-3.5-flash-lite"
 ARQUIVO_HISTORICO = "atos_ingeridos.json"
 
 # ==========================================
-# 2. RESOLVEDOR DE LINKS REAIS
+# 2. RESOLVEDOR DE LINKS REAIS E EXTRAÇÃO
 # ==========================================
 def resolver_url_real(google_url):
     """Resolve o redirecionamento do Google News para pegar a página real do DOU/portal"""
@@ -74,7 +75,8 @@ def resolver_url_real(google_url):
 
     return google_url
 
-def extrair_texto_completo(url_alvo):
+def extrair_conteudo_pagina(url_alvo):
+    """Extrai o texto completo da página de destino"""
     url_real = resolver_url_real(url_alvo)
     texto = ""
 
@@ -117,10 +119,10 @@ def salvar_historico(historico):
         json.dump(historico, f, ensure_ascii=False, indent=2)
 
 FEEDS_NORMATIVOS = [
-    # DOU Seção 1 - Atos e resoluções
+    # DOU Seção 1 - Atos e resoluções (Busca de 1 ano para carga inicial)
     "https://news.google.com/rss/search?q=site:in.gov.br+(\"Comitê+Gestor\"+OR+\"IBS\"+OR+\"NFS-e\"+OR+\"Reforma+Tributária\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     # Normas, Resoluções e Instruções Normativas oficiais
-    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Instrução+Normativa\"+OR+\"Ato+Declaratório\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"NFS-e\")+site:gov.br+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Instrução+Normativa\"+OR+\"Ato+Declaratório\"+OR+\"Ato+Conjunto\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"NFS-e\")+site:gov.br+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     # Notas Técnicas ABRASF e CNM
     "https://news.google.com/rss/search?q=(\"Nota+Técnica\"+OR+\"Parecer\")+AND+(\"ABRASF\"+OR+\"CNM\")+AND+(\"Reforma+Tributária\"+OR+\"ISS\"+OR+\"IBS\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419"
 ]
@@ -148,7 +150,7 @@ def coletar_publicacoes_normativas():
     return unicos
 
 # ==========================================
-# 4. CLASSIFICAÇÃO COM IA
+# 4. CLASSIFICAÇÃO COM IA (COM PROTEÇÃO DE COTA)
 # ==========================================
 def classificar_e_estruturar_ato(titulo, texto_completo, sumario_feed):
     conteudo_analise = texto_completo if len(texto_completo) > 200 else sumario_feed
@@ -156,14 +158,14 @@ def classificar_e_estruturar_ato(titulo, texto_completo, sumario_feed):
     prompt = f"""
 Você é um Auditor Fiscal Especialista em Legislação Tributária Municipal.
 
-Analise o texto abaixo e determine:
+Analise a publicação abaixo e determine:
 1. Este conteúdo trata de uma NORMA OFICIAL, RESOLUÇÃO, DELIBERAÇÃO, INSTRUÇÃO NORMATIVA, ATO CONJUNTO, CONVÊNIO ou NOTA TÉCNICA FORMAL que oriente ou afete a Reforma Tributária / Municípios / ISS / IBS / NFS-e?
-(Se for apenas notícia de jornal, artigo opinativo sem caráter normativo oficial ou conteúdo comercial, responda apenas: CLASSIFICACAO: DESCARTAR)
+(Se for apenas notícia jornalística, evento, convite, curso, artigo opinativo sem caráter normativo ou conteúdo irrelevante, responda apenas: CLASSIFICACAO: DESCARTAR)
 
 2. Se for norma, ato ou orientação técnica relevante, determine o destino:
 - Se for do Comitê Gestor do IBS (CGIBS): CLASSIFICACAO: CGIBS
 - Se for do Comitê Gestor da NFS-e (CGNFS-e) ou padrão técnico de nota fiscal: CLASSIFICACAO: NFSE
-- Se for Instrução Normativa da RFB, Portaria ou Nota Técnica oficial (ABRASF/CNM): CLASSIFICACAO: RFB_ENTIDADES
+- Se for Instrução Normativa da RFB, Ato Conjunto RFB/CGIBS, Portaria ou Nota Técnica oficial (ABRASF/CNM): CLASSIFICACAO: RFB_ENTIDADES
 
 3. Se classificado, formate a publicação para o Compêndio Jurídico oficial:
 
@@ -184,7 +186,21 @@ Texto:
 {conteudo_analise[:9000]}
 """
     model = genai.GenerativeModel(MODELO_IA)
-    return model.generate_content(prompt).text
+    
+    # Tentativa com proteção contra limite de cota (429)
+    for tentativa in range(3):
+        try:
+            resp = model.generate_content(prompt)
+            return resp.text
+        except Exception as e:
+            erro_str = str(e).lower()
+            if "429" in erro_str or "quota" in erro_str or "exhausted" in erro_str:
+                print("   ⏳ Limite por minuto da IA atingido. Pausando 30s para continuar...")
+                time.sleep(30)
+            else:
+                print(f"   ⚠️ Erro ao chamar Gemini: {e}")
+                return "CLASSIFICACAO: DESCARTAR"
+    return "CLASSIFICACAO: DESCARTAR"
 
 # ==========================================
 # 5. INJEÇÃO NO GOOGLE DOC
@@ -239,6 +255,7 @@ if __name__ == "__main__":
         if "CLASSIFICACAO: DESCARTAR" in analise:
             print("   [Descartado: Não é ato normativo/resolução oficial]")
             historico.append(identificador)
+            time.sleep(1.5)
             continue
 
         destino_doc = None
@@ -260,6 +277,7 @@ if __name__ == "__main__":
                 novos_ingeridos += 1
 
         historico.append(identificador)
+        time.sleep(2) # Pausa suave para manter estabilidade da API
 
     salvar_historico(historico)
     print(f"\n=======================================================")
