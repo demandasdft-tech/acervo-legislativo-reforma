@@ -51,11 +51,11 @@ def salvar_historico(historico):
 # ==========================================
 FEEDS_NORMATIVOS = [
     # DOU Seção 1 - Órgãos da Reforma Tributária
-    "https://news.google.com/rss/search?q=site:in.gov.br+(\"Comitê+Gestor+do+IBS\"+OR+\"Comitê+Gestor+da+Nota+Fiscal\"+OR+\"Receita+Federal\"+AND+\"IBS\")+when:3d&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    "https://news.google.com/rss/search?q=site:in.gov.br+(\"Comitê+Gestor+do+IBS\"+OR+\"Comitê+Gestor+da+Nota+Fiscal\"+OR+\"Receita+Federal\"+AND+\"IBS\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     # Publicações de atos, resoluções e instruções normativas no gov.br
-    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Ato+Conjunto\"+OR+\"Instrução+Normativa\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"CGIBS\")+site:gov.br+when:3d&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Ato+Conjunto\"+OR+\"Instrução+Normativa\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"CGIBS\")+site:gov.br+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     # Notas Técnicas e orientações da ABRASF e CNM
-    "https://news.google.com/rss/search?q=(\"Nota+Técnica\"+OR+\"Parecer\")+AND+(\"ABRASF\"+OR+\"CNM\")+AND+(\"Reforma+Tributária\"+OR+\"IBS\")+when:3d&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+    "https://news.google.com/rss/search?q=(\"Nota+Técnica\"+OR+\"Parecer\")+AND+(\"ABRASF\"+OR+\"CNM\")+AND+(\"Reforma+Tributária\"+OR+\"IBS\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419"
 ]
 
 def coletar_publicacoes_normativas():
