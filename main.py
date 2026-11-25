@@ -120,11 +120,11 @@ def salvar_historico(historico):
 
 FEEDS_NORMATIVOS = [
     # DOU Seção 1 - Atos e resoluções (Busca de 1 ano para carga inicial)
-    "https://news.google.com/rss/search?q=site:in.gov.br+(\"Comitê+Gestor\"+OR+\"IBS\"+OR+\"NFS-e\"+OR+\"Reforma+Tributária\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    "https://news.google.com/rss/search?q=site:in.gov.br+(\"Comitê+Gestor\"+OR+\"IBS\"+OR+\"NFS-e\"+OR+\"Reforma+Tributária\")+when:3d&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     # Normas, Resoluções e Instruções Normativas oficiais
-    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Instrução+Normativa\"+OR+\"Ato+Declaratório\"+OR+\"Ato+Conjunto\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"NFS-e\")+site:gov.br+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Instrução+Normativa\"+OR+\"Ato+Declaratório\"+OR+\"Ato+Conjunto\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"NFS-e\")+site:gov.br+when:3d&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     # Notas Técnicas ABRASF e CNM
-    "https://news.google.com/rss/search?q=(\"Nota+Técnica\"+OR+\"Parecer\")+AND+(\"ABRASF\"+OR+\"CNM\")+AND+(\"Reforma+Tributária\"+OR+\"ISS\"+OR+\"IBS\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+    "https://news.google.com/rss/search?q=(\"Nota+Técnica\"+OR+\"Parecer\")+AND+(\"ABRASF\"+OR+\"CNM\")+AND+(\"Reforma+Tributária\"+OR+\"ISS\"+OR+\"IBS\")+when:3d&hl=pt-BR&gl=BR&ceid=BR:pt-419"
 ]
 
 def coletar_publicacoes_normativas():
