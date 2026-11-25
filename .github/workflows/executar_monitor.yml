@@ -1,0 +1,47 @@
+name: Monitor Normativo e Ingestao Legislativa
+
+on:
+  schedule:
+    # 11:00 UTC corresponde exatamente às 08:00 de Brasília (UTC-3)
+    # Roda de segunda a sexta-feira
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch: # Permite disparar o botão manual a qualquer hora para testes
+
+permissions:
+  contents: write # Permite comitar o arquivo atos_ingeridos.json de volta no repositório
+
+jobs:
+  monitorar-atos:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+
+      - name: Executar Varredura e Ingestão Normativa
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GCP_SA_CREDENTIALS: ${{ secrets.GCP_SA_CREDENTIALS }}
+          DOC_ID_CGIBS: ${{ secrets.DOC_ID_CGIBS }}
+          DOC_ID_NFSE: ${{ secrets.DOC_ID_NFSE }}
+          DOC_ID_RFB: ${{ secrets.DOC_ID_RFB }}
+        run: |
+          python main.py
+
+      - name: Salvar histórico de atos processados
+        run: |
+          git config --global user.name 'Robo Normativo Fiscal'
+          git config --global user.email 'bot@jundiai.gov.br'
+          git add atos_ingeridos.json || true
+          git commit -m "Auto: atualizado histórico de atos normativos processados" || true
+          git push origin main || true
