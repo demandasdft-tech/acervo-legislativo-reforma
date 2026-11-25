@@ -13,7 +13,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 
 # ==========================================
-# 1. VALIDAÇÃO DE CONFIGURAÇÃO E AMBIENTE
+# 1. VALIDAÇÃO DE AMBIENTE
 # ==========================================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GCP_SA_CREDENTIALS = os.getenv("GCP_SA_CREDENTIALS")
@@ -23,7 +23,7 @@ DOC_ID_NFSE = os.getenv("DOC_ID_NFSE")
 DOC_ID_RFB = os.getenv("DOC_ID_RFB")
 
 if not all([GEMINI_API_KEY, GCP_SA_CREDENTIALS, DOC_ID_CGIBS, DOC_ID_NFSE, DOC_ID_RFB]):
-    print("ERRO CRÍTICO: Faltam variáveis de ambiente cadastradas nos Secrets do repositório.")
+    print("ERRO: Faltam variáveis de ambiente nos Secrets.")
     sys.exit(1)
 
 genai.configure(api_key=GEMINI_API_KEY)
@@ -31,7 +31,77 @@ MODELO_IA = "gemini-3.5-flash-lite"
 ARQUIVO_HISTORICO = "atos_ingeridos.json"
 
 # ==========================================
-# 2. CONTROLE DE ATOS JÁ PROCESSADOS (MEMÓRIA)
+# 2. RESOLVEDOR DE LINKS REAIS
+# ==========================================
+def resolver_url_real(google_url):
+    """Resolve o redirecionamento do Google News para pegar a página real do DOU/portal"""
+    if "news.google.com" not in google_url:
+        return google_url
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+    }
+
+    try:
+        resp = requests.get(google_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        cwiz = soup.select_one('c-wiz[data-p]')
+        if cwiz and cwiz.get('data-p'):
+            data_p = cwiz.get('data-p')
+            obj = json.loads(data_p.replace('%.@.', '["garturlreq",'))
+            payload = {'f.req': json.dumps([[["Fbv4je", json.dumps(obj[:-6] + obj[-2:]), "null", "generic"]]])}
+            p_headers = {
+                'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                'User-Agent': headers["User-Agent"]
+            }
+            post_resp = requests.post("https://news.google.com/_/DotsSplashUi/data/batchexecute", headers=p_headers, data=payload, timeout=10)
+            array_str = json.loads(post_resp.text.replace(")]}'", ""))[0][2]
+            url_resolvida = json.loads(array_str)[1]
+            if urlparse(url_resolvida).path not in ["", "/"]:
+                return url_resolvida
+    except Exception:
+        pass
+
+    try:
+        from googlenewsdecoder import gnewsdecoder
+        res = gnewsdecoder(google_url)
+        if isinstance(res, dict) and res.get("decoded_url"):
+            decoded = res["decoded_url"]
+            if urlparse(decoded).path not in ["", "/"]:
+                return decoded
+    except Exception:
+        pass
+
+    return google_url
+
+def extrair_texto_completo(url_alvo):
+    url_real = resolver_url_real(url_alvo)
+    texto = ""
+
+    try:
+        baixado = trafilatura.fetch_url(url_real)
+        if baixado:
+            texto = trafilatura.extract(baixado, include_tables=True) or ""
+    except Exception:
+        pass
+
+    if not texto or len(texto.strip()) < 150:
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url_real, headers=headers, timeout=12)
+            if resp.ok:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+                    tag.decompose()
+                paragrafos = [p.get_text().strip() for p in soup.find_all("p")]
+                texto = "\n".join([p for p in paragrafos if len(p) > 30])
+        except Exception:
+            pass
+
+    return url_real, texto[:12000]
+
+# ==========================================
+# 3. FEEDS E HISTÓRICO
 # ==========================================
 def carregar_historico():
     if os.path.exists(ARQUIVO_HISTORICO):
@@ -46,16 +116,13 @@ def salvar_historico(historico):
     with open(ARQUIVO_HISTORICO, "w", encoding="utf-8") as f:
         json.dump(historico, f, ensure_ascii=False, indent=2)
 
-# ==========================================
-# 3. BUSCA DE PUBLICAÇÕES NORMATIVAS OFICIAIS
-# ==========================================
 FEEDS_NORMATIVOS = [
-    # DOU Seção 1 - Órgãos da Reforma Tributária
-    "https://news.google.com/rss/search?q=site:in.gov.br+(\"Comitê+Gestor+do+IBS\"+OR+\"Comitê+Gestor+da+Nota+Fiscal\"+OR+\"Receita+Federal\"+AND+\"IBS\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-    # Publicações de atos, resoluções e instruções normativas no gov.br
-    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Ato+Conjunto\"+OR+\"Instrução+Normativa\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"CGIBS\")+site:gov.br+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-    # Notas Técnicas e orientações da ABRASF e CNM
-    "https://news.google.com/rss/search?q=(\"Nota+Técnica\"+OR+\"Parecer\")+AND+(\"ABRASF\"+OR+\"CNM\")+AND+(\"Reforma+Tributária\"+OR+\"IBS\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+    # DOU Seção 1 - Atos e resoluções
+    "https://news.google.com/rss/search?q=site:in.gov.br+(\"Comitê+Gestor\"+OR+\"IBS\"+OR+\"NFS-e\"+OR+\"Reforma+Tributária\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    # Normas, Resoluções e Instruções Normativas oficiais
+    "https://news.google.com/rss/search?q=(\"Resolução\"+OR+\"Instrução+Normativa\"+OR+\"Ato+Declaratório\")+AND+(\"IBS\"+OR+\"CBS\"+OR+\"NFS-e\")+site:gov.br+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    # Notas Técnicas ABRASF e CNM
+    "https://news.google.com/rss/search?q=(\"Nota+Técnica\"+OR+\"Parecer\")+AND+(\"ABRASF\"+OR+\"CNM\")+AND+(\"Reforma+Tributária\"+OR+\"ISS\"+OR+\"IBS\")+when:1y&hl=pt-BR&gl=BR&ceid=BR:pt-419"
 ]
 
 def coletar_publicacoes_normativas():
@@ -70,9 +137,8 @@ def coletar_publicacoes_normativas():
                     "sumario": entry.get("summary", "")[:400]
                 })
         except Exception as e:
-            print(f"Aviso ao ler feed normativo {url}: {e}")
+            print(f"Aviso no feed {url}: {e}")
 
-    # Remove duplicados por título
     unicos = []
     vistos = set()
     for p in publicacoes:
@@ -81,69 +147,47 @@ def coletar_publicacoes_normativas():
             unicos.append(p)
     return unicos
 
-def extrair_texto_completo(url):
-    """Extrai o texto na íntegra da publicação oficial"""
-    try:
-        baixado = trafilatura.fetch_url(url)
-        if baixado:
-            texto = trafilatura.extract(baixado, include_tables=True)
-            if texto and len(texto.strip()) > 200:
-                return texto[:12000]
-    except Exception:
-        pass
-
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
-        if resp.ok:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                tag.decompose()
-            paragrafos = [p.get_text().strip() for p in soup.find_all("p")]
-            return "\n".join([p for p in paragrafos if len(p) > 30])[:12000]
-    except Exception:
-        pass
-    return ""
-
 # ==========================================
-# 4. CLASSIFICAÇÃO E FORMATAÇÃO COM IA
+# 4. CLASSIFICAÇÃO COM IA
 # ==========================================
-def classificar_e_estruturar_ato(titulo, texto_completo):
+def classificar_e_estruturar_ato(titulo, texto_completo, sumario_feed):
+    conteudo_analise = texto_completo if len(texto_completo) > 200 else sumario_feed
+
     prompt = f"""
 Você é um Auditor Fiscal Especialista em Legislação Tributária Municipal.
 
-Analise a publicação abaixo e determine com rigor:
-1. Trata-se de uma NORMA OFICIAL, RESOLUÇÃO, DELIBERAÇÃO, INSTRUÇÃO NORMATIVA, ATO CONJUNTO ou NOTA TÉCNICA OFICIAL com aplicabilidade ou reflexo na Reforma Tributária / Municípios / ISS / IBS?
-(Se for apenas notícia jornalística, artigo de opinião ou matéria genérica sem caráter normativo, responda apenas: CLASSIFICACAO: DESCARTAR)
+Analise o texto abaixo e determine:
+1. Este conteúdo trata de uma NORMA OFICIAL, RESOLUÇÃO, DELIBERAÇÃO, INSTRUÇÃO NORMATIVA, ATO CONJUNTO, CONVÊNIO ou NOTA TÉCNICA FORMAL que oriente ou afete a Reforma Tributária / Municípios / ISS / IBS / NFS-e?
+(Se for apenas notícia de jornal, artigo opinativo sem caráter normativo oficial ou conteúdo comercial, responda apenas: CLASSIFICACAO: DESCARTAR)
 
-2. Se for uma norma ou ato oficial, determine o destino exato:
+2. Se for norma, ato ou orientação técnica relevante, determine o destino:
 - Se for do Comitê Gestor do IBS (CGIBS): CLASSIFICACAO: CGIBS
-- Se for do Comitê Gestor da NFS-e (CGNFS-e) ou padrões de nota técnica de NFS-e: CLASSIFICACAO: NFSE
-- Se for Instrução Normativa da Receita Federal (RFB), Ato Conjunto RFB/PGFN ou Nota Técnica de entidade municipalista (ABRASF/CNM): CLASSIFICACAO: RFB_ENTIDADES
+- Se for do Comitê Gestor da NFS-e (CGNFS-e) ou padrão técnico de nota fiscal: CLASSIFICACAO: NFSE
+- Se for Instrução Normativa da RFB, Portaria ou Nota Técnica oficial (ABRASF/CNM): CLASSIFICACAO: RFB_ENTIDADES
 
-3. Se classificado, formate a entrada para ser anexada ao Compêndio Jurídico oficial no seguinte padrão rigoroso:
-
----
-### [TIPO E NÚMERO DO ATO - EX: RESOLUÇÃO CGIBS Nº X, DE DD/MM/AAAA]
-- **Órgão Emissor:** [Ex: Comitê Gestor do IBS]
-- **Ementa Oficial:** [Ementa ou síntese do objetivo da norma]
-- **Data de Publicação / Vigência:** [Datas identificadas]
-- **Impacto para a Fiscalização de Jundiaí:** [1 parágrafo explicando as providências exigidas da Prefeitura]
-
-#### TEXTO INTEGRAL / DISPOSITIVOS PRINCIPAIS:
-[Transcreva fielmente os artigos, incisos e dispositivos principais da norma]
+3. Se classificado, formate a publicação para o Compêndio Jurídico oficial:
 
 ---
+### [TIPO E NÚMERO DO ATO OU NOTA TÉCNICA]
+- **Órgão Emissor:** [Ex: Comitê Gestor do IBS / RFB / ABRASF]
+- **Ementa / Objeto:** [Síntese do objetivo]
+- **Data / Vigência:** [Datas identificadas]
+- **Impacto para a Fiscalização de Jundiaí:** [1 parágrafo explicando as providências exigidas]
 
-Título da matéria: {titulo}
-Texto extraído:
-{texto_completo[:9000]}
+#### DISPOSITIVOS PRINCIPAIS / TEOR DA ORIENTAÇÃO:
+[Transcreva os artigos, orientações e determinações principais fielmente]
+
+---
+
+Título: {titulo}
+Texto:
+{conteudo_analise[:9000]}
 """
     model = genai.GenerativeModel(MODELO_IA)
-    resp = model.generate_content(prompt).text
-    return resp
+    return model.generate_content(prompt).text
 
 # ==========================================
-# 5. INJEÇÃO NO GOOGLE DOC RESPECTIVO
+# 5. INJEÇÃO NO GOOGLE DOC
 # ==========================================
 def anexar_ato_no_doc(doc_id, texto_formatado):
     try:
@@ -172,7 +216,7 @@ def anexar_ato_no_doc(doc_id, texto_formatado):
         return False
 
 # ==========================================
-# FLUXO PRINCIPAL
+# EXECUÇÃO PRINCIPAL
 # ==========================================
 if __name__ == "__main__":
     print("Iniciando varredura normativa de atos oficiais...")
@@ -185,39 +229,39 @@ if __name__ == "__main__":
     for pub in publicacoes:
         identificador = pub['titulo'].strip().lower()
         if identificador in historico:
-            continue # Já avaliado anteriormente
-
-        print(f"Avaliando: {pub['titulo'][:60]}...")
-        texto = extrair_texto_completo(pub['link'])
-        if not texto or len(texto) < 150:
             continue
 
-        analise = classificar_e_estruturar_ato(pub['titulo'], texto)
+        print(f"\n-> Avaliando: {pub['titulo'][:65]}...")
+        url_real, texto = extrair_conteudo_pagina(pub['link'])
+        
+        analise = classificar_e_estruturar_ato(pub['titulo'], texto, pub['sumario'])
 
         if "CLASSIFICACAO: DESCARTAR" in analise:
+            print("   [Descartado: Não é ato normativo/resolução oficial]")
             historico.append(identificador)
             continue
 
         destino_doc = None
         if "CLASSIFICACAO: CGIBS" in analise:
             destino_doc = DOC_ID_CGIBS
-            print(" -> Classificado como ato do CGIBS (Doc 02)")
+            print("   [Aceito -> Doc 02: Comitê Gestor do IBS]")
         elif "CLASSIFICACAO: NFSE" in analise:
             destino_doc = DOC_ID_NFSE
-            print(" -> Classificado como ato da NFS-e Nacional (Doc 03)")
+            print("   [Aceito -> Doc 03: NFS-e Nacional]")
         elif "CLASSIFICACAO: RFB_ENTIDADES" in analise:
             destino_doc = DOC_ID_RFB
-            print(" -> Classificado como RFB / Municipalista (Doc 04)")
+            print("   [Aceito -> Doc 04: RFB / Entidades]")
 
         if destino_doc:
-            # Remove as tags de instrução da IA para deixar o texto limpo no documento
             texto_limpo = analise.replace("CLASSIFICACAO: CGIBS", "").replace("CLASSIFICACAO: NFSE", "").replace("CLASSIFICACAO: RFB_ENTIDADES", "").strip()
             sucesso = anexar_ato_no_doc(destino_doc, texto_limpo)
             if sucesso:
-                print(" ✅ Ato inserido com sucesso na base normativa do Google Drive!")
+                print("   ✅ Gravado com sucesso no Google Doc correspondente!")
                 novos_ingeridos += 1
 
         historico.append(identificador)
 
     salvar_historico(historico)
-    print(f"Varredura finalizada. Novos atos oficiais ingeridos hoje: {novos_ingeridos}")
+    print(f"\n=======================================================")
+    print(f"Varredura concluída. Novos atos ingeridos com sucesso: {novos_ingeridos}")
+    print(f"=======================================================")
